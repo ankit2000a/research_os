@@ -17,18 +17,15 @@ except (KeyError, FileNotFoundError):
     st.stop()
 
 # --- ASYNCHRONOUS DATA FETCHING & AI FUNCTIONS ---
-# These functions are now "async" to run concurrently
 
 async def fetch_arxiv_data(query, max_results):
     loop = asyncio.get_running_loop()
-    # arxiv library is not async, so we run it in a thread executor
     search = await loop.run_in_executor(None, lambda: arxiv.Search(query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance))
     results = await loop.run_in_executor(None, list, search.results())
     return [{"title": p.title, "summary": p.summary, "url": p.entry_id} for p in results if p.summary]
 
 async def fetch_pubmed_data(query, max_results):
     loop = asyncio.get_running_loop()
-    # Biopython is not async, so we run it in a thread executor
     def search_and_fetch():
         Entrez.email = "your.email@example.com"
         handle = Entrez.esearch(db="pubmed", term=query, retmax=str(max_results), sort="relevance")
@@ -65,57 +62,134 @@ async def get_mindmap_data(text, query):
 async def get_hypotheses(text, query):
     model = genai.GenerativeModel('models/gemini-pro-latest')
     prompt = f"Based on the abstracts on '{query}', generate 3-5 novel research questions. For each, provide: a bolded **Hypothesis**, a **Rationale**, and a **First Experiment**. Format using Markdown."
-    response = await model.generate_content_async([prompt, "Abstracts: ---", text, "--- Novel Research Hypotheses:"])
+    response = await model.generate_content_async(prompt)
     return response.text
 
+# --- THIS IS THE FINAL, CORRECTED MIND MAP FUNCTION ---
 def draw_mindmap(data):
-    # This function doesn't do network I/O, so it doesn't need to be async
     html_template = f"""
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8">
-    <style>
-        body {{ background-color: #1E1E1E; margin: 0; }}
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body {{ background-color: #0E1117; margin: 0; }}
         .node circle {{ fill: #999; stroke: steelblue; stroke-width: 2px; }}
-        .node text {{ font: 14px sans-serif; fill: #ccc; }}
+        .node text {{ font: 14px sans-serif; fill: #fafafa; }}
         .link {{ fill: none; stroke: #555; stroke-opacity: 0.6; stroke-width: 1.5px; }}
-    </style></head>
-    <body><svg width="100%" height="800"></svg>
-    <script src="[https://d3js.org/d3.v7.min.js](https://d3js.org/d3.v7.min.js)"></script>
-    <script>
+      </style>
+    </head>
+    <body>
+      <svg width="100%" height="800"></svg>
+      <script src="[https://d3js.org/d3.v7.min.js](https://d3js.org/d3.v7.min.js)"></script>
+      <script>
         const data = {json.dumps(data)};
         const width = 1200;
+
         const root = d3.hierarchy(data);
-        const dx = 30; const dy = width / (root.height + 1);
+        const dx = 35;
+        const dy = width / (root.height + 1);
+
         const tree = d3.tree().nodeSize([dx, dy]);
-        root.x0 = dy / 2; root.y0 = 0;
-        root.descendants().forEach((d, i) => {{ d.id = i; d._children = d.children; }});
-        const svg = d3.select("svg").attr("viewBox", [-200, -400, width, 800]);
-        const gLink = svg.append("g").attr("fill", "none").attr("stroke", "#555").attr("stroke-opacity", 0.6).attr("stroke-width", 1.5);
-        const gNode = svg.append("g").attr("cursor", "pointer").attr("pointer-events", "all");
+
+        root.x0 = dy / 2;
+        root.y0 = 0;
+        root.descendants().forEach((d, i) => {{
+          d.id = i;
+          d._children = d.children;
+        }});
+
+        const svg = d3.select("svg")
+            .attr("viewBox", [-250, -400, width, 800])
+            .style("font", "14px sans-serif")
+            .style("user-select", "none");
+
+        const gLink = svg.append("g")
+            .attr("fill", "none")
+            .attr("stroke", "#555")
+            .attr("stroke-opacity", 0.6)
+            .attr("stroke-width", 1.5);
+
+        const gNode = svg.append("g")
+            .attr("cursor", "pointer")
+            .attr("pointer-events", "all");
+
         function update(source) {{
-            const duration = 250;
-            const nodes = root.descendants().reverse(); const links = root.links();
-            tree(root);
-            let left = root; let right = root;
-            root.eachBefore(node => {{
-                if (node.x < left.x) left = node;
-                if (node.x > right.x) right = node;
-            }});
-            const transition = svg.transition().duration(duration);
-            const node = gNode.selectAll("g").data(nodes, d => d.id);
-            const nodeEnter = node.enter().append("g").attr("transform", d => `translate(${source.y0},${source.x0})`).attr("fill-opacity", 0).attr("stroke-opacity", 0).on("click", (event, d) => {{ d.children = d.children ? null : d._children; update(d); }});
-            nodeEnter.append("circle").attr("r", 6).attr("fill", d => d._children ? "#555" : "#999");
-            nodeEnter.append("text").attr("dy", "0.31em").attr("x", d => d._children ? -12 : 12).attr("text-anchor", d => d._children ? "end" : "start").text(d => d.data.name).clone(true).lower().attr("stroke-linejoin", "round").attr("stroke-width", 3).attr("stroke", "#1E1E1E");
-            node.merge(nodeEnter).transition(transition).attr("transform", d => `translate(${d.y},${d.x})`).attr("fill-opacity", 1).attr("stroke-opacity", 1);
-            node.exit().transition(transition).remove().attr("transform", d => `translate(${source.y},${source.x})`).attr("fill-opacity", 0).attr("stroke-opacity", 0);
-            const link = gLink.selectAll("path").data(links, d => d.target.id);
-            const linkEnter = link.enter().append("path").attr("d", d3.linkHorizontal().x(d => source.y0).y(d => source.x0));
-            link.merge(linkEnter).transition(transition).attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
-            link.exit().transition(transition).remove().attr("d", d3.linkHorizontal().x(d => source.y).y(d => source.x));
-            root.eachBefore(d => {{ d.x0 = d.x; d.y0 = d.y; }});
+          const duration = 250;
+          const nodes = root.descendants().reverse();
+          const links = root.links();
+
+          tree(root);
+
+          let left = root;
+          let right = root;
+          root.eachBefore(node => {{
+            if (node.x < left.x) left = node;
+            if (node.x > right.x) right = node;
+          }});
+          
+          const transition = svg.transition().duration(duration);
+
+          const node = gNode.selectAll("g").data(nodes, d => d.id);
+          const nodeEnter = node.enter().append("g")
+              .attr("transform", d => `translate(${source.y0},${source.x0})`)
+              .attr("fill-opacity", 0)
+              .attr("stroke-opacity", 0)
+              .on("click", (event, d) => {{
+                d.children = d.children ? null : d._children;
+                update(d);
+              }});
+
+          nodeEnter.append("circle")
+              .attr("r", 6)
+              .attr("fill", d => d._children ? "#555" : "#999");
+
+          nodeEnter.append("text")
+              .attr("dy", "0.31em")
+              .attr("x", d => d._children ? -12 : 12)
+              .attr("text-anchor", d => d._children ? "end" : "start")
+              .text(d => d.data.name)
+              .clone(true).lower()
+              .attr("stroke-linejoin", "round")
+              .attr("stroke-width", 3)
+              .attr("stroke", "#0E1117");
+
+          node.merge(nodeEnter).transition(transition)
+              .attr("transform", d => `translate(${d.y},${d.x})`)
+              .attr("fill-opacity", 1)
+              .attr("stroke-opacity", 1);
+
+          node.exit().transition(transition).remove()
+              .attr("transform", d => `translate(${source.y},${source.x})`)
+              .attr("fill-opacity", 0)
+              .attr("stroke-opacity", 0);
+
+          const link = gLink.selectAll("path").data(links, d => d.target.id);
+          const linkEnter = link.enter().append("path")
+              .attr("d", d => {{
+                const o = {{x: source.x0, y: source.y0}};
+                return d3.linkHorizontal().x(d => o.y).y(d => o.x)({{source: o, target: o}});
+              }});
+
+          link.merge(linkEnter).transition(transition)
+              .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x));
+
+          link.exit().transition(transition).remove()
+              .attr("d", d => {{
+                const o = {{x: source.x, y: source.y}};
+                return d3.linkHorizontal().x(d => o.y).y(d => o.x)({{source: o, target: o}});
+              }});
+
+          root.eachBefore(d => {{
+            d.x0 = d.x;
+            d.y0 = d.y;
+          }});
         }}
+        
         update(root);
-    </script></body></html>
+      </script>
+    </body>
+    </html>
     """
     return html_template
 
@@ -129,35 +203,25 @@ with st.sidebar:
 
 st.title("🔬 Research OS")
 
-# This is the main async function that will run our app logic
 async def main():
     if start_button:
         if search_query:
-            with st.spinner(f"Searching {data_source} and building analysis..."):
+            with st.spinner(f"Building analysis for '{search_query}'..."):
                 try:
-                    if data_source == 'arXiv':
-                        papers_data = await fetch_arxiv_data(search_query, num_papers)
-                    else:
-                        papers_data = await fetch_pubmed_data(search_query, num_papers)
+                    papers_data = await (fetch_arxiv_data(search_query, num_papers) if data_source == 'arXiv' else fetch_pubmed_data(search_query, num_papers))
                     
                     if not papers_data:
                         st.warning("No papers with abstracts found for this topic.")
                     else:
                         combined_abstracts = "\n\n---\n\n".join([f"Paper Title: {p['title']}\nAbstract: {p['summary']}" for p in papers_data])
                         
-                        # --- Run all AI tasks at the same time ---
                         synthesis_task = get_detailed_synthesis(combined_abstracts, search_query)
                         mindmap_task = get_mindmap_data(combined_abstracts, search_query)
                         hypotheses_task = get_hypotheses(combined_abstracts, search_query)
                         
-                        # Wait for all three tasks to complete
                         results = await asyncio.gather(synthesis_task, mindmap_task, hypotheses_task)
+                        analysis_text, mindmap_data, hypotheses_text = results
                         
-                        analysis_text = results[0]
-                        mindmap_data = results[1]
-                        hypotheses_text = results[2]
-                        
-                        # --- Display results in tabs ---
                         tab1, tab2, tab3 = st.tabs(["Synthesized Analysis", "Mind Map", "Suggested Hypotheses"])
                         
                         with tab1:
@@ -176,13 +240,11 @@ async def main():
                             st.markdown(hypotheses_text)
                         
                         st.success("Analysis complete!")
-
                 except Exception as e:
                     st.error(f"An error occurred.")
-                    st.exception(e) # Show the full error for debugging
+                    st.exception(e)
         else:
             st.warning("Please enter a research topic.")
 
-# This runs the main async function
 if __name__ == "__main__":
     asyncio.run(main())
