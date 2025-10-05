@@ -52,20 +52,39 @@ def get_graph_from_ai(combined_abstracts, search_query):
     cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
     return json.loads(cleaned_response)
 
-# --- NEW: Function to draw the graph ---
-def draw_graph(graph_data):
-    net = Network(height='600px', width='100%', bgcolor='#222222', font_color='white', notebook=True, cdn_resources='in_line')
+# --- NEW: Function to get graph data from AI ---
+def get_graph_from_ai(combined_abstracts, search_query):
+    model = genai.GenerativeModel('models/gemini-pro-latest')
+    prompt = f"""
+    You are a research analyst. Your task is to read the following scientific abstracts on the topic of '{search_query}' and extract the key concepts and their relationships as a structured graph.
+
+    The output MUST BE a valid JSON object following this exact structure:
+    {{
+      "nodes": [
+        {{"id": "Concept Name", "label": "Concept Name", "group": "category"}}
+      ],
+      "edges": [
+        {{"from": "Source Concept", "to": "Target Concept", "label": "relationship"}}
+      ]
+    }}
+
+    Rules for the graph:
+    1.  **Nodes:** Identify 10-15 of the most important, high-level concepts. Do not include generic terms.
+    2.  **Groups:** Categorize each node into one of the following groups: 'Core Technology', 'Problem', 'Application', 'Method', or 'Finding'.
+    3.  **Edges:** Define the relationship between concepts with clear, simple labels like 'solves', 'improves on', 'enables', 'challenges', or 'is a type of'.
+
+    Here are the abstracts:
+    ---
+    {combined_abstracts}
+    ---
+
+    JSON Output:
+    ```json
+    """
     
-    for node in graph_data['nodes']:
-        net.add_node(node['id'], label=node['label'], group=node.get('group', 'default'))
-    
-    for edge in graph_data['edges']:
-        net.add_edge(edge['from'], edge['to'], label=edge.get('label', ''))
-        
-    net.show('knowledge_graph.html')
-    with open('knowledge_graph.html', 'r', encoding='utf-8') as f:
-        html_code = f.read()
-    return html_code
+    response = model.generate_content(prompt)
+    cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+    return json.loads(cleaned_response)
 
 # --- Sidebar ---
 with st.sidebar:
