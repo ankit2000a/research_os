@@ -84,8 +84,8 @@ async def get_detailed_synthesis(text, query):
     """
     Generates a detailed synthesized analysis using the Gemini API.
     """
-    # CORRECTED: Using the stable gemini-pro model name
-    model = genai.GenerativeModel('gemini-pro')
+    # CORRECTED: Using the gemini-1.5-pro model
+    model = genai.GenerativeModel('gemini-1.5-pro')
     prompt = f"""
     Act as a world-class research analyst. Your task is to provide a comprehensive, graduate-level synthesized analysis of the following research paper abstracts on the topic of '{query}'.
 
@@ -106,8 +106,8 @@ async def get_mindmap_data(text, query):
     """
     Generates hierarchical JSON data for a mind map using the Gemini API.
     """
-    # CORRECTED: Using the stable gemini-pro model name
-    model = genai.GenerativeModel('gemini-pro')
+    # CORRECTED: Using the gemini-1.5-pro model
+    model = genai.GenerativeModel('gemini-1.5-pro')
     prompt = f"""
     Read the provided research paper abstracts on '{query}'. Based on the content, generate a nested, hierarchical JSON object suitable for rendering as a D3.js collapsible tree graph.
 
@@ -131,8 +131,8 @@ async def get_hypotheses(text, query):
     """
     Generates novel research hypotheses using the Gemini API.
     """
-    # CORRECTED: Using the stable gemini-pro model name
-    model = genai.GenerativeModel('gemini-pro')
+    # CORRECTED: Using the gemini-1.5-pro model
+    model = genai.GenerativeModel('gemini-1.5-pro')
     prompt = f"""
     Act as a world-class research scientist. Based on the provided abstracts on '{query}', your task is to identify research gaps and generate 3-5 novel, testable research questions.
 
