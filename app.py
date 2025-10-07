@@ -20,12 +20,14 @@ except (KeyError, FileNotFoundError):
 
 async def fetch_arxiv_data(query, max_results):
     loop = asyncio.get_running_loop()
+    # arxiv library is not async, so we run it in a thread executor
     search = await loop.run_in_executor(None, lambda: arxiv.Search(query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance))
     results = await loop.run_in_executor(None, list, search.results())
     return [{"title": p.title, "summary": p.summary, "url": p.entry_id} for p in results if p.summary]
 
 async def fetch_pubmed_data(query, max_results):
     loop = asyncio.get_running_loop()
+    # Biopython is not async, so we run it in a thread executor
     def search_and_fetch():
         Entrez.email = "your.email@example.com"
         handle = Entrez.esearch(db="pubmed", term=query, retmax=str(max_results), sort="relevance")
@@ -61,14 +63,28 @@ async def get_mindmap_data(text, query):
 
 async def get_hypotheses(text, query):
     model = genai.GenerativeModel('models/gemini-pro-latest')
-    prompt = f"Based on the abstracts on '{query}', generate 3-5 novel research questions. For each, provide: a bolded **Hypothesis**, a **Rationale**, and a **First Experiment**. Format using Markdown."
+    prompt = f"""
+    You are a world-class research scientist. Based on the following research abstracts on '{query}', your task is to identify potential future research directions.
+
+    Generate 3 to 5 novel research questions. For each question, provide:
+    1.  A clear, bolded **Hypothesis**.
+    2.  A brief **Rationale** explaining why this is a valuable question based on the provided text.
+    3.  A suggested **First Experiment** to begin testing the hypothesis.
+
+    Format the entire output using Markdown, beginning directly with the first hypothesis. Do not include any introductory sentences.
+
+    Abstracts:
+    ---
+    {text}
+    ---
+    """
     response = await model.generate_content_async(prompt)
     return response.text
 
 # --- THIS IS THE FINAL, CORRECTED MIND MAP FUNCTION ---
 def draw_mindmap(data):
     # The bug was caused by Python's f-string trying to interpret JavaScript's template literals.
-    # The fix is to use a standard string and escape the JavaScript curly braces properly inside the script tag.
+    # The fix is to escape all JavaScript curly braces with double braces `{{` and `}}`.
     html_template = f"""
     <!DOCTYPE html>
     <html>
