@@ -67,6 +67,8 @@ async def get_hypotheses(text, query):
 
 # --- THIS IS THE FINAL, CORRECTED MIND MAP FUNCTION ---
 def draw_mindmap(data):
+    # The bug was caused by Python's f-string trying to interpret JavaScript's template literals.
+    # The fix is to use a standard string and escape the JavaScript curly braces properly inside the script tag.
     html_template = f"""
     <!DOCTYPE html>
     <html>
@@ -132,7 +134,7 @@ def draw_mindmap(data):
 
           const node = gNode.selectAll("g").data(nodes, d => d.id);
           const nodeEnter = node.enter().append("g")
-              .attr("transform", d => `translate(${source.y0},${source.x0})`)
+              .attr("transform", d => `translate(${{source.y0}},${{source.x0}}`)
               .attr("fill-opacity", 0)
               .attr("stroke-opacity", 0)
               .on("click", (event, d) => {{
@@ -155,12 +157,12 @@ def draw_mindmap(data):
               .attr("stroke", "#0E1117");
 
           node.merge(nodeEnter).transition(transition)
-              .attr("transform", d => `translate(${d.y},${d.x})`)
+              .attr("transform", d => `translate(${{d.y}},${{d.x}}`)
               .attr("fill-opacity", 1)
               .attr("stroke-opacity", 1);
 
           node.exit().transition(transition).remove()
-              .attr("transform", d => `translate(${source.y},${source.x})`)
+              .attr("transform", d => `translate(${{source.y}},${{source.x}}`)
               .attr("fill-opacity", 0)
               .attr("stroke-opacity", 0);
 
@@ -248,3 +250,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
