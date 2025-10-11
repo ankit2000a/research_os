@@ -23,12 +23,12 @@ st.markdown("""
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
     }
 
-    /* Main content area */
+    /* Main content area - Reduced padding to prevent right shift */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
-        padding-left: 5rem;
-        padding-right: 5rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
     }
 
     /* DataFrame table styling */
@@ -44,9 +44,11 @@ st.markdown("""
     .stTable tbody tr {
         border-bottom: 1px solid #E6EAF1;
     }
+    /* Set text alignment to left for table cells */
     .stTable tbody td {
         padding: 0.75rem 0.5rem;
         vertical-align: top;
+        text-align: left;
     }
 
     /* Section headers */
@@ -205,11 +207,17 @@ def display_research_brief(research_brief_data, search_query, papers_data):
 # --- MAIN APP LOGIC ---
 
 with st.sidebar:
-    st.image("https://i.imgur.com/rLoaV0k.png", width=50)
-    st.title("Research OS")
+    # UPDATED SIDEBAR LAYOUT
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        st.image("https://i.imgur.com/rLoaV0k.png", width=50)
+    with col2:
+        st.title("Research OS")
+    
     st.markdown("The Insight Engine for Modern Research.")
-    st.markdown("---")
+    
     st.header("Controls")
+    # REMOVED the st.markdown("---") line
     data_source = st.selectbox("Data Source", ["arXiv", "PubMed"])
     search_query = st.text_input("Research Topic", placeholder="e.g., CRISPR-Cas9 Gene Editing")
     num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3)
@@ -251,4 +259,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+
