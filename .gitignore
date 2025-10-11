@@ -1,0 +1,11 @@
+# Python virtual environment
+.venv/
+
+# Streamlit secrets
+.streamlit/
+
+# Database file
+research_os.db
+
+# Mac system files
+.DS_Store
