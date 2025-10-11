@@ -31,26 +31,28 @@ st.markdown("""
         padding-right: 2rem;
     }
 
-    /* MODIFIED: Changed selector from .stTable to 'table' to correctly style pandas HTML */
+    /* Table styling */
     table {
         border: none;
         width: 100%;
     }
     table thead th {
-        border-bottom: 2px solid #E6EAF1;
+        border-bottom: 2px solid #303640; /* Darker border for dark theme */
         font-size: 1rem;
         font-weight: 600;
-        color: #5E6572;
-        text-align: left; /* Ensure headers are left-aligned */
+        /* FIX: Brighter, more readable header color */
+        color: #CED4DA;
+        /* FIX: Force left alignment */
+        text-align: left !important;
     }
     table tbody tr {
-        border-bottom: 1px solid #E6EAF1;
+        border-bottom: 1px solid #303640;
     }
-    /* FIX: Ensure table cell text is always left-aligned */
+    /* FIX: Force left alignment for all table cells */
     table tbody td {
         padding: 0.75rem 0.5rem;
         vertical-align: top;
-        text-align: left;
+        text-align: left !important;
     }
 
     /* Section headers */
@@ -256,5 +258,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
     
