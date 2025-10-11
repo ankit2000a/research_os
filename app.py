@@ -1,6 +1,6 @@
 import streamlit as st
 import arxiv
-import google.generativeai as genai
+import google.generativai as genai
 from Bio import Entrez
 import json
 import asyncio
@@ -165,15 +165,55 @@ async def fetch_pubmed_data(query, max_results):
     return await loop.run_in_executor(None, search_and_fetch)
 
 async def generate_research_brief(text, query):
-    """Generates a structured JSON research brief."""
+    """Generates a structured JSON research brief with robust error handling."""
     model = genai.GenerativeModel('gemini-2.5-pro')
+    # CORRECTED: Restored the full, detailed prompt.
     prompt = f"""
-    Act as a world-class research analyst... [Prompt content redacted for brevity] ...
-    Abstracts: --- {text} ---
+    Act as a world-class research analyst with extreme attention to detail.
+    Your task is to analyze the following research paper abstracts on the topic of '{query}' and generate a structured JSON intelligence brief. The content must be detailed and substantial.
+
+    The JSON output MUST conform to the following schema:
+    {{
+      "executive_summary": "A detailed, high-level synthesis of the key findings. It should connect the papers and explain their collective importance. Minimum 3-4 sentences.",
+      "key_hypotheses_and_findings": [
+        {{
+          "paper_title": "The full title of the paper.",
+          "hypothesis": "The core hypothesis or research question of the paper, stated clearly.",
+          "finding": "A detailed explanation of the primary finding or conclusion of the paper, including key supporting points from the abstract."
+        }}
+      ],
+      "methodology_comparison": [
+        {{
+          "paper_title": "The full title of the paper.",
+          "methodology": "A clear description of the methodology used (e.g., 'Systematic Review of 50 papers', 'Randomized Control Trial with 250 participants', 'Computational Model using Monte Carlo simulation')."
+        }}
+      ],
+      "contradictions_and_gaps": [
+        "A bullet point describing a specific contradiction between two or more papers.",
+        "A bullet point identifying a clear research gap or unanswered question that emerges from reading these abstracts collectively."
+      ]
+    }}
+
+    Analyze the provided abstracts and return ONLY the raw JSON object, without any surrounding text, explanations, or markdown formatting.
+
+    Abstracts:
+    ---
+    {text}
+    ---
     """
     response = await model.generate_content_async(prompt)
-    cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
-    return json.loads(cleaned_response)
+    
+    # CORRECTED: Added a robust error-checking block before parsing JSON.
+    try:
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        if not cleaned_response:
+            raise ValueError("The AI model returned an empty response. This is often due to safety filters.")
+        return json.loads(cleaned_response)
+    except (ValueError, AttributeError, json.JSONDecodeError) as e:
+        st.error("Error: The AI model's response was not valid JSON. This can happen if the content triggered a safety filter or if there was a temporary API issue.")
+        # For debugging, show the raw response from the model
+        st.code(f"Model Response:\n{response.parts if hasattr(response, 'parts') else 'No response data available.'}")
+        raise  # Re-raise the exception to be caught by the main loop and display the full traceback.
 
 # --- UI RENDERING ---
 
@@ -185,8 +225,6 @@ def display_research_brief(brief_data):
     st.subheader("Executive Summary")
     st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
 
-    # Display tables and other data...
-    # [Table rendering code redacted for brevity]
     st.subheader("Key Hypotheses & Findings")
     hypotheses_data = brief_data["brief_data"].get("key_hypotheses_and_findings", [])
     if hypotheses_data:
