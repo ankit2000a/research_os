@@ -23,7 +23,7 @@ st.markdown("""
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
     }
 
-    /* Main content area - Reduced padding to prevent right shift */
+    /* Main content area */
     .main .block-container {
         padding-top: 2rem;
         padding-bottom: 2rem;
@@ -31,21 +31,23 @@ st.markdown("""
         padding-right: 2rem;
     }
 
-    /* DataFrame table styling */
-    .stTable {
+    /* MODIFIED: Changed selector from .stTable to 'table' to correctly style pandas HTML */
+    table {
         border: none;
+        width: 100%;
     }
-    .stTable thead th {
+    table thead th {
         border-bottom: 2px solid #E6EAF1;
         font-size: 1rem;
         font-weight: 600;
         color: #5E6572;
+        text-align: left; /* Ensure headers are left-aligned */
     }
-    .stTable tbody tr {
+    table tbody tr {
         border-bottom: 1px solid #E6EAF1;
     }
-    /* Set text alignment to left for table cells */
-    .stTable tbody td {
+    /* FIX: Ensure table cell text is always left-aligned */
+    table tbody td {
         padding: 0.75rem 0.5rem;
         vertical-align: top;
         text-align: left;
@@ -120,7 +122,6 @@ async def generate_research_brief(text, query):
     """
     model = genai.GenerativeModel('gemini-2.5-pro')
     
-    # UPDATED PROMPT: Demanding more detailed and elaborate responses.
     prompt = f"""
     Act as a world-class research analyst with extreme attention to detail.
     Your task is to analyze the following research paper abstracts on the topic of '{query}' and generate a structured JSON intelligence brief. The content must be detailed and substantial.
@@ -163,7 +164,7 @@ async def generate_research_brief(text, query):
 
 def display_research_brief(research_brief_data, search_query, papers_data):
     """
-    NEW: Renders the structured research brief with improved aesthetics.
+    Renders the structured research brief with improved aesthetics.
     """
     st.header(f"Dynamic Research Brief: {search_query}")
     
@@ -174,9 +175,7 @@ def display_research_brief(research_brief_data, search_query, papers_data):
     hypotheses_data = research_brief_data.get("key_hypotheses_and_findings", [])
     if hypotheses_data:
         hypotheses_df = pd.DataFrame(hypotheses_data)
-        # RENAME COLUMNS: From 'paper_title' to 'Paper Title'
         hypotheses_df.columns = ["Paper Title", "Hypothesis", "Finding"]
-        # HIDE INDEX: Convert to HTML to hide the 0,1,2... index
         st.markdown(hypotheses_df.to_html(index=False), unsafe_allow_html=True)
     else:
         st.info("No key hypotheses or findings were extracted.")
@@ -207,17 +206,15 @@ def display_research_brief(research_brief_data, search_query, papers_data):
 # --- MAIN APP LOGIC ---
 
 with st.sidebar:
-    # UPDATED SIDEBAR LAYOUT
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        st.image("https://i.imgur.com/rLoaV0k.png", width=50)
-    with col2:
-        st.title("Research OS")
-    
+    # REVISED SIDEBAR LAYOUT
+    st.image("https://i.imgur.com/rLoaV0k.png", width=50)
+    st.title("Research OS")
     st.markdown("The Insight Engine for Modern Research.")
     
+    # ADDED BACK the divider line
+    st.markdown("---")
+    
     st.header("Controls")
-    # REMOVED the st.markdown("---") line
     data_source = st.selectbox("Data Source", ["arXiv", "PubMed"])
     search_query = st.text_input("Research Topic", placeholder="e.g., CRISPR-Cas9 Gene Editing")
     num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3)
@@ -260,3 +257,4 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 
+    
