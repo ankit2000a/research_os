@@ -1,6 +1,6 @@
 import streamlit as st
 import arxiv
-import google.generativai as genai
+import google.generativeai as genai
 from Bio import Entrez
 import json
 import asyncio
@@ -317,4 +317,3 @@ if st.session_state.current_brief:
         st.rerun()
 else:
     st.info("Enter a topic in the sidebar and click 'Generate Research Brief' to begin.")
-    
