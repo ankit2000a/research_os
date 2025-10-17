@@ -6,8 +6,7 @@ import asyncio
 import pandas as pd
 import sqlite3
 from serpapi import GoogleSearch
-import requests
-from bs4 import BeautifulSoup
+# REMOVED: requests and beautifulsoup4 are no longer needed
 
 # --- PAGE CONFIGURATION & AESTHETICS ---
 st.set_page_config(
@@ -27,6 +26,12 @@ st.markdown("""
     table tbody tr { border-bottom: 1px solid #303640; }
     table tbody td { padding: 0.75rem 0.5rem; vertical-align: top; text-align: left !important; }
     h1, h2, h3 { font-weight: 600; }
+    .paper-card {
+        border: 1px solid #303640;
+        border-radius: 8px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -79,67 +84,22 @@ async def search_google_scholar(query):
     loop = asyncio.get_running_loop()
     
     def sync_search():
-        params = {
-            "engine": "google_scholar",
-            "q": query,
-            "api_key": SERPAPI_API_KEY,
-            "num": 25 # Fetch more results
-        }
+        params = {"engine": "google_scholar", "q": query, "api_key": SERPAPI_API_KEY, "num": 25}
         search = GoogleSearch(params)
         results = search.get_dict()
-        
-        papers = []
-        for result in results.get("organic_results", []):
-            papers.append({
-                "title": result.get("title", "No Title"),
-                "summary": result.get("snippet", "No summary available."),
-                "url": result.get("link", "#")
-            })
-        return papers
+        return [{"title": r.get("title", "No Title"), "summary": r.get("snippet", "No summary available."), "url": r.get("link", "#")} for r in results.get("organic_results", [])]
         
     return await loop.run_in_executor(None, sync_search)
 
-async def get_full_abstract_from_url(url):
-    """Uses AI to extract a full, clean abstract from a given URL."""
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # A more robust way to find the abstract text
-        main_content = soup.find('main') or soup.find('article') or soup.find('body')
-        page_text = ' '.join(p.get_text() for p in main_content.find_all('p')) if main_content else ''
-
-        if not page_text or len(page_text) < 100:
-            return "Could not extract sufficient text from this URL."
-
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        prompt = f"""Analyze the following text content from the URL: {url}
-        Your task is to identify and return ONLY the full, clean, and well-written abstract of the academic paper.
-        Do not include the title or any other text.
-        
-        Text content:
-        ---
-        {page_text[:8000]} 
-        ---
-        """
-        
-        ai_response = await model.generate_content_async(prompt)
-        return ai_response.text
-        
-    except requests.exceptions.HTTPError as e:
-        return f"Could not access URL: {e}. Some sites (like JSTOR) block automated requests."
-    except Exception as e:
-        return f"Could not process URL: {e}"
+# REMOVED: The slow get_full_abstract_from_url function has been deleted.
 
 async def generate_research_brief(papers, query):
     """Generates the structured research brief, forcing comprehensiveness."""
-    text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary available.')}" for p in papers]); num_papers = len(papers)
-    json_schema = {"type": "object", "properties": { "executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
+    text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary.')}" for p in papers]); num_papers = len(papers)
+    json_schema = {"type": "object", "properties": {"executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
     generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
     model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
-    prompt = f"""Act as a world-class research analyst. You have {num_papers} abstracts for '{query}'. Populate the JSON schema with a detailed brief, ensuring an entry for EACH of the {num_papers} papers in all relevant sections."""
+    prompt = f"Act as a world-class research analyst. You have {num_papers} abstracts for '{query}'. Populate the JSON schema with a detailed brief, ensuring an entry for EACH of the {num_papers} papers in all relevant sections."
     response = await model.generate_content_async(prompt)
     try:
         if not response.parts: raise ValueError("Model returned empty response.")
@@ -148,10 +108,6 @@ async def generate_research_brief(papers, query):
         st.error(f"Error: AI response was not valid JSON. {e}"); st.code(f"Raw Model Response:\n{response.text}", language="text"); raise
 
 # --- UI RENDERING & MAIN LOGIC ---
-def display_research_brief(brief_data):
-    if not brief_data or "brief_data" not in brief_data or not brief_data["brief_data"]: st.error("Brief data is missing."); return
-    query = brief_data["query"]; st.header(f"Dynamic Research Brief: {query}")
-    # ... display logic
 init_db()
 if 'current_brief' not in st.session_state: st.session_state.current_brief = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
@@ -162,39 +118,47 @@ with st.sidebar:
     
     num_selected = len(st.session_state.selected_papers)
     if num_selected > 0:
+        st.write(f"**{num_selected} papers selected.**")
         if st.button(f"Generate Brief from {num_selected} Papers", type="primary", use_container_width=True):
-            with st.spinner("Synthesizing your curated brief..."):
-                try:
-                    topic_query = st.session_state.get("search_query", "Selected Papers")
-                    papers_to_analyze = list(st.session_state.selected_papers.values())
-                    brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
-                    st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
-                    st.session_state.selected_papers = {}; st.session_state.search_results = []
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to generate brief: {e}")
+            st.session_state.generating_brief = True
     else:
         st.info("Select papers from the search results to generate a brief.")
 
     st.markdown("---"); st.header("🧠 Knowledge Base")
     # ... knowledge base UI
 st.title("🔬 Research OS")
-if st.session_state.current_brief:
-    display_research_brief(st.session_state.current_brief)
+
+if st.session_state.get('generating_brief'):
+    with st.spinner("Synthesizing your curated brief..."):
+        try:
+            topic_query = st.session_state.get("search_query", "Selected Papers")
+            papers_to_analyze = list(st.session_state.selected_papers.values())
+            brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
+            st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
+            st.session_state.selected_papers = {}; st.session_state.search_results = []
+            del st.session_state['generating_brief']
+            st.rerun()
+        except Exception as e:
+            st.error(f"Failed to generate brief: {e}")
+            del st.session_state['generating_brief']
+
+elif st.session_state.current_brief:
+    if brief_data := st.session_state.current_brief:
+        st.header(f"Dynamic Research Brief: {brief_data['query']}")
+        # ... display logic
     # ... save to project UI
 elif st.session_state.search_results:
     st.header(f"Search Results for '{st.session_state.search_query}'")
     st.markdown(f"Found **{len(st.session_state.search_results)}** papers. Select the most relevant to generate your brief.")
     
     for i, paper in enumerate(st.session_state.search_results):
-        with st.container():
+        with st.container(border=True):
             col1, col2 = st.columns([10, 2])
             with col1:
                 st.subheader(paper['title'])
             with col2:
-                # Toggle button logic
                 is_selected = paper['title'] in st.session_state.selected_papers
-                button_text = "➖ Remove" if is_selected else "➕ Add to Brief"
+                button_text = "➖ Remove" if is_selected else "➕ Add"
                 if st.button(button_text, key=f"toggle_{i}"):
                     if is_selected:
                         del st.session_state.selected_papers[paper['title']]
@@ -204,19 +168,7 @@ elif st.session_state.search_results:
 
             with st.expander("View Abstract"):
                 st.markdown(f"**[Link to Paper]({paper.get('url', '#')})**")
-                
-                # Abstract display with "Fetch Full Abstract" button
-                abstract_placeholder = st.empty()
-                abstract_placeholder.markdown(paper.get('summary', 'No summary available.'))
-                
-                if st.button("⬇️ Fetch Full Abstract", key=f"fetch_{i}"):
-                    with st.spinner("Fetching full abstract with AI..."):
-                        full_summary = asyncio.run(get_full_abstract_from_url(paper.get('url')))
-                        st.session_state.search_results[i]['summary'] = full_summary
-                        abstract_placeholder.markdown(full_summary) # Update display immediately
-            
-            st.markdown("---")
-
+                st.markdown(paper.get('summary', 'No summary available.'))
 else:
     st.info("Enter a topic in the chat bar below to search Google Scholar.")
 
@@ -231,7 +183,7 @@ if prompt := st.chat_input("Search Google Scholar for papers..."):
             else:
                 st.session_state.search_results = results
                 st.session_state.current_brief = None
-                st.session_state.selected_papers = {} # Clear selection on new search
+                st.session_state.selected_papers = {}
                 st.rerun()
         except Exception as e:
             st.error(f"Failed to perform search: {e}")
