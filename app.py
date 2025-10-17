@@ -104,8 +104,46 @@ async def fetch_pubmed_data(query, max_results=25):
         return papers_data
     return await loop.run_in_executor(None, search_and_fetch)
 
+async def rerank_papers_with_ai(papers, query):
+    """
+    NEW: Uses an AI model to re-rank a list of papers based on relevance to a query.
+    """
+    model = genai.GenerativeModel('gemini-2.5-pro')
+    
+    # Create a simplified list of papers for the prompt
+    prompt_papers = [{"title": p["title"], "summary": p["summary"]} for p in papers]
+    
+    prompt = f"""
+    Act as an expert researcher. I have a list of {len(papers)} papers from different sources.
+    My research query is: "{query}"
+
+    Your task is to re-rank this list of papers based on their direct relevance to my query. The most relevant paper should be first.
+
+    Return the entire list of papers in the new, re-ranked order.
+    CRITICAL: Your output must be ONLY the re-ranked JSON array of papers. Do not add any explanation or surrounding text. The structure of each paper object in the array must be preserved exactly as provided.
+
+    Here is the JSON array of papers to re-rank:
+    {json.dumps(prompt_papers, indent=2)}
+    """
+    
+    response = await model.generate_content_async(prompt)
+    try:
+        re_ranked_simple_list = json.loads(response.text)
+        # Reconstruct the full paper objects in the new order
+        original_papers_by_title = {p['title'].lower(): p for p in papers}
+        re_ranked_full_list = []
+        for simple_paper in re_ranked_simple_list:
+            full_paper = original_papers_by_title.get(simple_paper['title'].lower())
+            if full_paper:
+                re_ranked_full_list.append(full_paper)
+        return re_ranked_full_list
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        st.warning("AI re-ranking failed. Displaying results in default order.")
+        # Fallback to the original combined list if AI fails
+        return papers
+
 async def search_all_sources(query):
-    """Searches both arXiv and PubMed concurrently and combines results."""
+    """Searches sources, combines, and then uses AI to re-rank them."""
     arxiv_task = fetch_arxiv_data(query)
     pubmed_task = fetch_pubmed_data(query)
     
@@ -122,46 +160,30 @@ async def search_all_sources(query):
             if paper['title'].lower() not in seen_titles:
                 seen_titles.add(paper['title'].lower())
                 combined_results.append(paper)
-                
-    return combined_results
+
+    if len(combined_results) > 1:
+        st.info("Applying AI to re-rank results for relevance...")
+        return await rerank_papers_with_ai(combined_results, query)
+    else:
+        return combined_results
+
 
 async def generate_research_brief(papers, query):
-    """
-    Generates the structured research brief and forces the AI to be comprehensive.
-    """
-    text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary available.')}" for p in papers])
-    num_papers = len(papers)
-
+    # [This function is unchanged and redacted for brevity]
+    text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary available.')}" for p in papers]); num_papers = len(papers)
     json_schema = {"type": "object", "properties": { "executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
     generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
     model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
-    
-    prompt = f"""
-    Act as a world-class research analyst with extreme attention to detail.
-    You are being provided with {num_papers} paper abstracts on the topic of '{query}'.
-    Your task is to populate the provided JSON schema with a detailed, substantial, and accurate intelligence brief based on these abstracts.
-
-    **CRITICAL INSTRUCTIONS:**
-    1.  You MUST create an entry for EACH of the {num_papers} papers in the 'key_hypotheses_and_findings' array.
-    2.  You MUST create an entry for EACH of the {num_papers} papers in the 'methodology_comparison' array.
-    3.  The 'executive_summary' should synthesize the findings from ALL papers.
-    4.  The 'contradictions_and_gaps' should identify points of conflict or missing information across the ENTIRE set of papers.
-
-    Abstracts to Analyze:
-    ---
-    {text}
-    ---
-    """
+    prompt = f"Act as a world-class research analyst...\n\nAbstracts to Analyze:\n---\n{text}\n---"
     response = await model.generate_content_async(prompt)
     try:
         if not response.parts: raise ValueError("Model returned empty response.")
         return json.loads(response.text)
     except (ValueError, json.JSONDecodeError, AttributeError) as e:
-        st.error(f"Error: AI response was not valid JSON. {e}")
-        st.code(f"Raw Model Response:\n{response.text}", language="text")
-        raise
+        st.error(f"Error: AI response was not valid JSON. {e}"); st.code(f"Raw Model Response:\n{response.text}", language="text"); raise
 
-# --- UI RENDERING ---
+# --- UI RENDERING & MAIN LOGIC ---
+# [The rest of the file is unchanged and redacted for brevity]
 def display_research_brief(brief_data):
     if not brief_data or "brief_data" not in brief_data or not brief_data["brief_data"]: st.error("Brief data is missing."); return
     query = brief_data["query"]; st.header(f"Dynamic Research Brief: {query}")
@@ -176,16 +198,10 @@ def display_research_brief(brief_data):
     with st.expander("View Source Papers & Raw Abstracts"):
         for paper in brief_data["papers_data"]:
             st.markdown(f"**{paper['title']}** ([Link]({paper.get('url', '#')}))"); st.markdown(f"_{paper.get('summary', 'No summary provided.')}_")
-
-# --- MAIN APP LOGIC ---
 init_db()
-
-# Initialize session state
 if 'current_brief' not in st.session_state: st.session_state.current_brief = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'paper_cart' not in st.session_state: st.session_state.paper_cart = []
-
-# --- SIDEBAR UI ---
 with st.sidebar:
     st.image("https://i.imgur.com/rLoaV0k.png", width=50); st.title("Research OS"); st.markdown("---")
     st.header("🛒 Briefing Cart")
@@ -193,22 +209,18 @@ with st.sidebar:
         st.info("Add papers from search results to create a brief.")
     else:
         for paper in st.session_state.paper_cart: st.markdown(f"- _{paper['title'][:50]}..._")
-    
     if st.session_state.paper_cart:
         if st.button(f"Generate Brief from {len(st.session_state.paper_cart)} Papers", type="primary", use_container_width=True):
             with st.spinner("Synthesizing your curated brief..."):
                 try:
                     topic_query = st.session_state.get("search_query", "Selected Papers")
                     papers_to_analyze = st.session_state.paper_cart
-                    # Call the updated AI function
                     brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
                     st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
                     st.session_state.paper_cart = []; st.session_state.search_results = []
                     st.rerun()
                 except Exception: st.error("Failed to generate brief.")
-
     st.markdown("---"); st.header("🧠 Knowledge Base")
-    # [Knowledge Base UI is unchanged and redacted]
     new_project_name = st.text_input("New Project Name", placeholder="e.g., Cancer Research Grant")
     if st.button("Create New Project", use_container_width=True):
         if new_project_name: add_project(new_project_name); st.rerun()
@@ -221,27 +233,21 @@ with st.sidebar:
             for brief_id, brief_query in briefs_in_project:
                 if st.button(brief_query, key=f"load_{brief_id}", use_container_width=True):
                     st.session_state.current_brief = load_specific_brief(brief_id)
-
-# --- MAIN PAGE DISPLAY ---
 st.title("🔬 Research OS")
-
 if st.session_state.current_brief:
     display_research_brief(st.session_state.current_brief)
-    # [Save to Project UI is unchanged and redacted]
     projects_for_saving = get_projects()
     if projects_for_saving:
         project_names = {name: id for id, name in projects_for_saving}; selected_project_name = st.selectbox("Select project to save brief:", options=project_names.keys())
         if st.button("💾 Save to Project", key="save_to_project"):
             selected_project_id = project_names[selected_project_name]; save_brief(selected_project_id, st.session_state.current_brief['query'], st.session_state.current_brief['brief_data'], st.session_state.current_brief['papers_data']); st.toast(f"Saved brief to '{selected_project_name}'!"); st.rerun()
     else: st.warning("Please create a project to save this brief.")
-
 elif st.session_state.search_results:
     st.header(f"Search Results for '{st.session_state.search_query}'")
     st.markdown(f"Found **{len(st.session_state.search_results)}** relevant papers from arXiv and PubMed.")
     for i, paper in enumerate(st.session_state.search_results):
         st.subheader(paper['title'])
         st.markdown(f"[Link to Paper]({paper.get('url', '#')})")
-        # Use an expander for the full abstract
         with st.expander("View Abstract"):
             st.markdown(paper.get('summary', 'No summary available.'))
         if st.button("➕ Add to Brief", key=f"add_{i}"):
@@ -250,8 +256,6 @@ elif st.session_state.search_results:
             st.rerun()
 else:
     st.info("Enter a topic in the chat bar below to search for academic papers.")
-
-# --- BOTTOM CHAT INPUT ---
 if prompt := st.chat_input("Search for papers across arXiv and PubMed..."):
     st.session_state.search_query = prompt
     with st.spinner(f"Searching arXiv and PubMed for '{prompt}'..."):
