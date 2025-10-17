@@ -26,6 +26,10 @@ st.markdown("""
     table tbody tr { border-bottom: 1px solid #303640; }
     table tbody td { padding: 0.75rem 0.5rem; vertical-align: top; text-align: left !important; }
     h1, h2, h3 { font-weight: 600; }
+    /* Style for the container of the bottom controls */
+    .bottom-controls {
+        padding-bottom: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -237,36 +241,35 @@ if st.session_state.current_brief:
 else:
      st.info("Enter a topic in the chat bar below to generate your first research brief.")
 
-# --- NEW POPOVER CONTROLS & CHAT INPUT ---
-# This entire section is now at the bottom of the main page flow
+# --- NEW BOTTOM CONTROLS & CHAT INPUT ---
+st.container() # This helps to group the bottom elements
 
-# Use columns to place the popover button to the left
-col1, col2 = st.columns([1, 15]) 
-with col1:
-    # This popover holds the configuration options
-    with st.popover("⚙️"):
-        st.markdown("### Configuration")
-        data_source = st.selectbox("Data Source", ["arXiv", "PubMed"], key="data_source_popover")
-        num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3, key="num_papers_popover")
-with col2:
-    # The main chat input
-    if prompt := st.chat_input("Enter your research topic..."):
-        # Retrieve settings from the popover's widgets
-        ds = st.session_state.data_source_popover
-        np = st.session_state.num_papers_popover
+with st.container():
+    st.markdown('<div class="bottom-controls">', unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        data_source = st.selectbox("Data Source", ["arXiv", "PubMed"], key="data_source_bottom")
+    with col2:
+        num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3, key="num_papers_bottom")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        with st.spinner(f"Building brief for '{prompt}'..."):
-            try:
-                papers_data = asyncio.run(fetch_data(ds, prompt, np))
-                if not papers_data:
-                    st.warning(f"No academic papers found for '{prompt}' on {ds}.")
-                else:
-                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
-                    brief_data = asyncio.run(generate_research_brief(combined_abstracts, prompt))
-                    st.session_state.current_brief = {
-                        "query": prompt, "brief_data": brief_data, "papers_data": papers_data
-                    }
-                    st.rerun()
-            except Exception:
-                st.error("Failed to generate the research brief.")
-                
+
+if prompt := st.chat_input("Enter your research topic..."):
+    # Retrieve settings from the bottom widgets
+    ds = st.session_state.data_source_bottom
+    np = st.session_state.num_papers_bottom
+
+    with st.spinner(f"Building brief for '{prompt}'..."):
+        try:
+            papers_data = asyncio.run(fetch_data(ds, prompt, np))
+            if not papers_data:
+                st.warning(f"No academic papers found for '{prompt}' on {ds}.")
+            else:
+                combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
+                brief_data = asyncio.run(generate_research_brief(combined_abstracts, prompt))
+                st.session_state.current_brief = {
+                    "query": prompt, "brief_data": brief_data, "papers_data": papers_data
+                }
+                st.rerun()
+        except Exception:
+            st.error("Failed to generate the research brief.")
