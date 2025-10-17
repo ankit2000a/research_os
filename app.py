@@ -1,8 +1,6 @@
 import streamlit as st
-import arxiv
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig
-from Bio import Entrez
 import json
 import asyncio
 import pandas as pd
@@ -71,54 +69,82 @@ def load_specific_brief(brief_id):
         return {"query": query, "brief_data": json.loads(brief_data_json), "papers_data": json.loads(papers_data_json)}
     return None
 
-# --- DATA FETCHING & AI FUNCTIONS ---
-# [fetch_data and generate_research_brief functions are unchanged and redacted]
-async def fetch_data(source, query, max_results):
-    if source == 'arXiv': return await fetch_arxiv_data(query, max_results)
-    else: return await fetch_pubmed_data(query, max_results)
-async def fetch_arxiv_data(query, max_results):
-    loop = asyncio.get_running_loop(); search = await loop.run_in_executor(None, lambda: arxiv.Search(query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance)); results = await loop.run_in_executor(None, list, search.results())
-    return [{"title": p.title, "summary": p.summary, "url": p.entry_id} for p in results if p.summary]
-async def fetch_pubmed_data(query, max_results):
-    loop = asyncio.get_running_loop()
-    def search_and_fetch():
-        Entrez.email = "your.email@example.com"; handle = Entrez.esearch(db="pubmed", term=query, retmax=str(max_results), sort="relevance"); record = Entrez.read(handle); handle.close(); id_list = record["IdList"]
-        if not id_list: return []
-        handle = Entrez.efetch(db="pubmed", id=id_list, rettype="abstract", retmode="xml"); records = Entrez.read(handle); handle.close(); papers_data = []
-        for i, article in enumerate(records.get('PubmedArticle', [])):
-            try: papers_data.append({"title": article['MedlineCitation']['Article']['ArticleTitle'], "summary": article['MedlineCitation']['Article']['Abstract']['AbstractText'][0], "url": f"https://pubmed.ncbi.nlm.nih.gov/{id_list[i]}/"})
-            except (KeyError, IndexError): continue
-        return papers_data
-    return await loop.run_in_executor(None, search_and_fetch)
+# --- AI-POWERED SEARCH FUNCTION ---
+async def search_and_find_papers(query):
+    """
+    Uses Gemini with Google Search grounding to find relevant papers from the entire web.
+    """
+    model = genai.GenerativeModel(
+        'gemini-2.5-pro',
+        tools=['google_search']
+    )
+    
+    # --- THIS IS THE FIX ---
+    # The prompt is now much stricter to ensure academic quality.
+    prompt = f"""
+    You are an expert academic research librarian. Your task is to use Google Search to find the top 7 most relevant and recent **academic papers, preprints, and scholarly articles** from across the entire web for the topic: "{query}".
+
+    **CRITICAL INSTRUCTIONS:**
+    1.  **Prioritize Authoritative Sources:** Focus your search on academic databases (like Google Scholar, Semantic Scholar), university repositories, and well-known preprint servers (e.g., arXiv, bioRxiv) and established journals.
+    2.  **Verify Scholarly Nature:** Ensure each result is a genuine research paper, article, or preprint with an identifiable author or research institution.
+    3.  **AVOID NON-ACADEMIC CONTENT:** You MUST exclude blogs, news articles, marketing content, and general web pages. If you cannot find a link to the actual paper (e.g., a PDF or an abstract page on an academic site), do not include it.
+
+    For each verified paper you find, you must provide the title, a valid URL to the paper itself, and a concise one-sentence summary.
+    
+    CRITICAL: Your entire response must be a single, valid JSON object, structured as an array of papers. Do not include any other text.
+    Example format:
+    [
+      {{
+        "title": "Example Paper Title",
+        "url": "https://arxiv.org/abs/1234.5678",
+        "summary": "This paper investigates..."
+      }}
+    ]
+    """
+    
+    response = await model.generate_content_async(prompt)
+    
+    try:
+        cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
+        if not cleaned_response:
+             raise ValueError("The AI model returned an empty response.")
+        return json.loads(cleaned_response)
+    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+        st.error("The AI failed to find and format papers correctly. This can happen with very niche topics or if the AI's safety filters were triggered.")
+        st.code(f"Raw model response:\n{response.text}", language="text")
+        return []
+
 async def generate_research_brief(text, query):
+    """Generates the structured research brief from the user-selected papers."""
     json_schema = {"type": "object", "properties": { "executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
     generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
-    model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config); prompt = f"Act as a world-class research analyst. Analyze the following abstracts on '{query}' and populate the provided JSON schema.\n\nAbstracts:\n---\n{text}\n---"
+    model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
+    prompt = f"Act as a world-class research analyst. Analyze the following abstracts on '{query}' and populate the provided JSON schema.\n\nAbstracts:\n---\n{text}\n---"
     response = await model.generate_content_async(prompt)
     try:
-        if not response.parts: raise ValueError("Model returned empty response."); return json.loads(response.text)
+        if not response.parts: raise ValueError("Model returned empty response.")
+        return json.loads(response.text)
     except (ValueError, json.JSONDecodeError, AttributeError) as e:
-        st.error(f"Error: AI response was not valid JSON. {e}"); st.code(f"Raw Model Response:\n{response.text}", language="text"); raise
+        st.error(f"Error: AI response was not valid JSON. {e}")
+        st.code(f"Raw Model Response:\n{response.text}", language="text")
+        raise
 
 # --- UI RENDERING ---
+# [display_research_brief function is unchanged and redacted]
 def display_research_brief(brief_data):
-    query = brief_data["query"]
-    st.header(f"Dynamic Research Brief: {query}")
-    # [Table rendering logic is unchanged and redacted]
+    if not brief_data or "brief_data" not in brief_data or not brief_data["brief_data"]: st.error("Brief data is missing."); return
+    query = brief_data["query"]; st.header(f"Dynamic Research Brief: {query}")
     st.subheader("Executive Summary"); st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
-    st.subheader("Key Hypotheses & Findings")
     if data := brief_data["brief_data"].get("key_hypotheses_and_findings", []):
         df = pd.DataFrame(data); df.columns = ["Paper Title", "Hypothesis", "Finding"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
-    st.subheader("Methodology Comparison")
     if data := brief_data["brief_data"].get("methodology_comparison", []):
-        df = pd.DataFrame(data); df.columns = ["Paper Title", "Methodology"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
-    st.subheader("Identified Contradictions & Research Gaps")
+        st.subheader("Methodology Comparison"); df = pd.DataFrame(data); df.columns = ["Paper Title", "Methodology"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
     if data := brief_data["brief_data"].get("contradictions_and_gaps", []):
+        st.subheader("Identified Contradictions & Research Gaps");
         for item in data: st.markdown(f"- {item}")
     with st.expander("View Source Papers & Raw Abstracts"):
         for paper in brief_data["papers_data"]:
-            st.markdown(f"**{paper['title']}** ([Link]({paper.get('url', '#')}))"); st.markdown(f"_{paper['summary']}_")
-
+            st.markdown(f"**{paper['title']}** ([Link]({paper.get('url', '#')}))"); st.markdown(f"_{paper.get('summary', 'No summary provided.')}_")
 
 # --- MAIN APP LOGIC ---
 init_db()
@@ -130,39 +156,27 @@ if 'paper_cart' not in st.session_state: st.session_state.paper_cart = []
 
 # --- SIDEBAR UI ---
 with st.sidebar:
-    st.image("https://i.imgur.com/rLoaV0k.png", width=50)
-    st.title("Research OS")
-    st.markdown("---")
-    
-    # NEW: Briefing Cart
+    st.image("https://i.imgur.com/rLoaV0k.png", width=50); st.title("Research OS"); st.markdown("---")
     st.header("🛒 Briefing Cart")
     if not st.session_state.paper_cart:
-        st.info("Add papers from the search results to create a brief.")
+        st.info("Add papers from search results to create a brief.")
     else:
-        for paper in st.session_state.paper_cart:
-            st.markdown(f"- _{paper['title'][:50]}..._")
+        for paper in st.session_state.paper_cart: st.markdown(f"- _{paper['title'][:50]}..._")
     
     if st.session_state.paper_cart:
         if st.button(f"Generate Brief from {len(st.session_state.paper_cart)} Papers", type="primary", use_container_width=True):
             with st.spinner("Synthesizing your curated brief..."):
                 try:
-                    # Use the search query from the first paper in the cart as the topic
-                    topic_query = st.session_state.search_query
+                    topic_query = st.session_state.get("search_query", "Selected Papers")
                     papers_to_analyze = st.session_state.paper_cart
-                    
-                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_to_analyze])
+                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p.get('summary', 'No summary available.')}" for p in papers_to_analyze])
                     brief_data = asyncio.run(generate_research_brief(combined_abstracts, topic_query))
-                    
                     st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
-                    # Clear cart and results after generating
-                    st.session_state.paper_cart = []
-                    st.session_state.search_results = []
+                    st.session_state.paper_cart = []; st.session_state.search_results = []
                     st.rerun()
-                except Exception:
-                    st.error("Failed to generate brief.")
+                except Exception: st.error("Failed to generate brief.")
 
-    st.markdown("---")
-    st.header("🧠 Knowledge Base")
+    st.markdown("---"); st.header("🧠 Knowledge Base")
     # [Knowledge Base UI is unchanged and redacted]
     new_project_name = st.text_input("New Project Name", placeholder="e.g., Cancer Research Grant")
     if st.button("Create New Project", use_container_width=True):
@@ -180,7 +194,6 @@ with st.sidebar:
 # --- MAIN PAGE DISPLAY ---
 st.title("🔬 Research OS")
 
-# Display the generated brief if it exists
 if st.session_state.current_brief:
     display_research_brief(st.session_state.current_brief)
     # [Save to Project UI is unchanged and redacted]
@@ -191,42 +204,31 @@ if st.session_state.current_brief:
             selected_project_id = project_names[selected_project_name]; save_brief(selected_project_id, st.session_state.current_brief['query'], st.session_state.current_brief['brief_data'], st.session_state.current_brief['papers_data']); st.toast(f"Saved brief to '{selected_project_name}'!"); st.rerun()
     else: st.warning("Please create a project to save this brief.")
 
-# Display search results if they exist
 elif st.session_state.search_results:
-    st.header("Search Results")
+    st.header(f"Search Results for '{st.session_state.search_query}'")
+    st.markdown(f"Found **{len(st.session_state.search_results)}** relevant papers. Add the most relevant ones to your brief.")
     for i, paper in enumerate(st.session_state.search_results):
         st.subheader(paper['title'])
-        st.markdown(f"_{paper['summary'][:250]}..._ [Link]({paper['url']})")
+        st.markdown(f"_{paper.get('summary', 'No summary available.')}_ [Link]({paper.get('url', '#')})")
         if st.button("➕ Add to Brief", key=f"add_{i}"):
             st.session_state.paper_cart.append(paper)
-            # Optional: remove from search results to prevent duplicates
             st.session_state.search_results.pop(i)
             st.rerun()
 else:
-    st.info("Enter a topic in the chat bar below to search for papers.")
+    st.info("Enter a topic in the chat bar below to search the web for academic papers.")
 
-
-# --- BOTTOM CONTROLS & CHAT INPUT ---
-with st.container():
-    st.markdown('<div class="bottom-controls">', unsafe_allow_html=True)
-    col1, col2 = st.columns([1, 2])
-    with col1: data_source = st.selectbox("Data Source", ["arXiv", "PubMed"], key="data_source_bottom")
-    with col2: num_papers = st.slider("Number of Papers to Find", min_value=5, max_value=20, value=10, key="num_papers_bottom")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-if prompt := st.chat_input("Enter a topic to search for papers..."):
-    ds = st.session_state.data_source_bottom
-    np = st.session_state.num_papers_bottom
-    st.session_state.search_query = prompt # Save the query for later
-    
-    with st.spinner(f"Searching {ds} for '{prompt}'..."):
+# --- BOTTOM CHAT INPUT ---
+if prompt := st.chat_input("Search the web for academic papers..."):
+    st.session_state.search_query = prompt
+    with st.spinner(f"Using AI to search the web for '{prompt}'..."):
         try:
-            results = asyncio.run(fetch_data(ds, prompt, np))
+            results = asyncio.run(search_and_find_papers(prompt))
             if not results:
-                st.warning(f"No papers found for '{prompt}' on {ds}.")
+                st.warning(f"The AI search did not find any papers for '{prompt}'.")
             else:
                 st.session_state.search_results = results
-                st.session_state.current_brief = None # Clear any old brief
+                st.session_state.current_brief = None
                 st.rerun()
         except Exception as e:
-            st.error(f"Failed to search: {e}")
+            st.error(f"Failed to perform AI search: {e}")
+            
