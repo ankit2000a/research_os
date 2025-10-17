@@ -27,6 +27,7 @@ st.markdown("""
     table tbody tr { border-bottom: 1px solid #303640; }
     table tbody td { padding: 0.75rem 0.5rem; vertical-align: top; text-align: left !important; }
     h1, h2, h3 { font-weight: 600; }
+    /* NEW: Style for search result cards */
     .paper-card {
         border: 1px solid #303640;
         border-radius: 8px;
@@ -119,13 +120,43 @@ async def get_full_abstract_from_url(url):
 async def generate_research_brief(papers, query):
     """Generates the structured research brief, forcing comprehensiveness."""
     text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary.')}" for p in papers]); num_papers = len(papers)
-    json_schema = {"type": "object", "properties": {"executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
-    generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
-    model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
-    prompt = f"Act as a world-class research analyst. You have {num_papers} abstracts for '{query}'. Populate the JSON schema with a detailed brief, ensuring an entry for EACH of the {num_papers} papers in all relevant sections."
     
     # --- THIS IS THE FIX ---
-    # Added a 120-second timeout to the main AI call.
+    # Added a maxLength constraint to prevent the AI from generating absurdly long, invalid titles.
+    json_schema = {
+        "type": "object",
+        "properties": {
+            "executive_summary": {"type": "string"},
+            "key_hypotheses_and_findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "paper_title": {"type": "string", "maxLength": 250}, # Constraint added
+                        "hypothesis": {"type": "string"},
+                        "finding": {"type": "string"}
+                    }
+                }
+            },
+            "methodology_comparison": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "paper_title": {"type": "string", "maxLength": 250}, # Constraint added
+                        "methodology": {"type": "string"}
+                    }
+                }
+            },
+            "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]
+    }
+
+    generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
+    model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
+    prompt = f"Act as a world-class research analyst. You have {num_papers} abstracts for '{query}'. Populate the JSON schema with a detailed brief, ensuring an entry for EACH of the {num_papers} papers in all relevant sections. Paper titles must be concise and accurate."
+    
     response = await model.generate_content_async(prompt, request_options={"timeout": 120})
     
     try:
@@ -140,7 +171,6 @@ if 'current_brief' not in st.session_state: st.session_state.current_brief = Non
 if 'search_results' not in st.session_state: st.session_state.search_results = []
 if 'selected_papers' not in st.session_state: st.session_state.selected_papers = {}
 
-# --- REFACTORED SIDEBAR & BRIEF GENERATION TRIGGER ---
 with st.sidebar:
     st.image("https://i.imgur.com/rLoaV0k.png", width=50); st.title("Research OS"); st.markdown("---")
     
@@ -148,50 +178,44 @@ with st.sidebar:
     if num_selected > 0:
         st.write(f"**{num_selected} papers selected.**")
         if st.button(f"Generate Brief from {num_selected} Papers", type="primary", use_container_width=True):
-            with st.spinner("Synthesizing your curated brief..."):
-                try:
-                    topic_query = st.session_state.get("search_query", "Selected Papers")
-                    papers_to_analyze = list(st.session_state.selected_papers.values())
-                    
-                    # Direct call and state update
-                    brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
-                    
-                    st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
-                    st.session_state.selected_papers = {}
-                    st.session_state.search_results = []
-                    st.rerun() # Rerun to display the brief
-                except Exception as e:
-                    st.error(f"Failed to generate brief: {e}")
+            st.session_state.generating_brief = True # Set flag to trigger generation
     else:
         st.info("Select papers from the search results to generate a brief.")
 
     st.markdown("---"); st.header("🧠 Knowledge Base")
-    # ... knowledge base UI
+    # ... knowledge base UI ...
 st.title("🔬 Research OS")
 
-# --- REFACTORED MAIN PAGE LOGIC ---
-if st.session_state.current_brief:
-    brief_data = st.session_state.current_brief
-    st.header(f"Dynamic Research Brief: {brief_data['query']}")
-    st.subheader("Executive Summary")
-    st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
-    # ... more display logic ...
+# --- BUG FIX: New State Management for Brief Generation ---
+if st.session_state.get('generating_brief'):
+    with st.spinner("Synthesizing your curated brief..."):
+        try:
+            topic_query = st.session_state.get("search_query", "Selected Papers")
+            papers_to_analyze = list(st.session_state.selected_papers.values())
+            brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
+            st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
+            st.session_state.selected_papers = {}; st.session_state.search_results = []
+            del st.session_state['generating_brief'] # Clear the flag
+            st.rerun() # Rerun to display the brief
+        except Exception as e:
+            st.error(f"Failed to generate brief: {e}")
+            del st.session_state['generating_brief']
+
+elif st.session_state.current_brief:
+    if brief_data := st.session_state.current_brief:
+        st.header(f"Dynamic Research Brief: {brief_data['query']}")
+        st.subheader("Executive Summary")
+        st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
+        # ... more display logic ...
     
-    # Save to project UI
-    projects_for_saving = get_projects()
-    if projects_for_saving:
-        project_names = {name: id for id, name in projects_for_saving}
-        selected_project_name = st.selectbox("Select project to save brief:", options=project_names.keys())
-        if st.button("💾 Save to Project", key="save_to_project"):
-            # ... save logic ...
-            st.rerun()
+    # ... save to project UI ...
 
 elif st.session_state.search_results:
     st.header(f"Search Results for '{st.session_state.search_query}'")
     st.markdown(f"Found **{len(st.session_state.search_results)}** papers. Select the most relevant to generate your brief.")
     
     for i, paper in enumerate(st.session_state.search_results):
-        with st.container(border=True):
+        with st.container(border=True): # Card-like container
             col1, col2 = st.columns([10, 2])
             with col1:
                 st.subheader(paper['title'])
@@ -219,7 +243,7 @@ elif st.session_state.search_results:
 else:
     st.info("Enter a topic in the chat bar below to search Google Scholar.")
 
-# --- BOTTOM CHAT INPUT ---
+# --- BOTTOM CHAT INPUT (URL input removed) ---
 if prompt := st.chat_input("Search Google Scholar for papers..."):
     st.session_state.search_query = prompt
     with st.spinner(f"Searching Google Scholar for '{prompt}'..."):
@@ -234,3 +258,4 @@ if prompt := st.chat_input("Search Google Scholar for papers..."):
                 st.rerun()
         except Exception as e:
             st.error(f"Failed to perform search: {e}")
+            
