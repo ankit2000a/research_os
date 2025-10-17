@@ -5,7 +5,6 @@ import json
 import asyncio
 import pandas as pd
 import sqlite3
-# We need to re-import these libraries for the new search method
 import arxiv
 from Bio import Entrez
 
@@ -73,7 +72,7 @@ def load_specific_brief(brief_id):
     return None
 
 # --- REVISED ACADEMIC SEARCH FUNCTIONS ---
-async def fetch_arxiv_data(query, max_results=10):
+async def fetch_arxiv_data(query, max_results=25):
     """Fetches paper data from the arXiv API."""
     loop = asyncio.get_running_loop()
     search = await loop.run_in_executor(None, lambda: arxiv.Search(
@@ -82,7 +81,7 @@ async def fetch_arxiv_data(query, max_results=10):
     results = await loop.run_in_executor(None, list, search.results())
     return [{"title": p.title, "summary": p.summary, "url": p.entry_id} for p in results if p.summary]
 
-async def fetch_pubmed_data(query, max_results=10):
+async def fetch_pubmed_data(query, max_results=25):
     """Fetches paper data from the PubMed API."""
     loop = asyncio.get_running_loop()
     def search_and_fetch():
@@ -106,7 +105,7 @@ async def fetch_pubmed_data(query, max_results=10):
     return await loop.run_in_executor(None, search_and_fetch)
 
 async def search_all_sources(query):
-    """NEW: Searches both arXiv and PubMed concurrently and combines results."""
+    """Searches both arXiv and PubMed concurrently and combines results."""
     arxiv_task = fetch_arxiv_data(query)
     pubmed_task = fetch_pubmed_data(query)
     
@@ -120,19 +119,39 @@ async def search_all_sources(query):
             st.warning(f"A data source failed: {source_results}")
             continue
         for paper in source_results:
-            # Simple deduplication based on title
             if paper['title'].lower() not in seen_titles:
                 seen_titles.add(paper['title'].lower())
                 combined_results.append(paper)
                 
     return combined_results
 
-async def generate_research_brief(text, query):
-    """Generates the structured research brief from the user-selected papers."""
+async def generate_research_brief(papers, query):
+    """
+    Generates the structured research brief and forces the AI to be comprehensive.
+    """
+    text = "\n\n---\n\n".join([f"**Paper Title:** {p['title']}\n**Abstract:** {p.get('summary', 'No summary available.')}" for p in papers])
+    num_papers = len(papers)
+
     json_schema = {"type": "object", "properties": { "executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
     generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
     model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
-    prompt = f"Act as a world-class research analyst. Analyze the following abstracts on '{query}' and populate the provided JSON schema.\n\nAbstracts:\n---\n{text}\n---"
+    
+    prompt = f"""
+    Act as a world-class research analyst with extreme attention to detail.
+    You are being provided with {num_papers} paper abstracts on the topic of '{query}'.
+    Your task is to populate the provided JSON schema with a detailed, substantial, and accurate intelligence brief based on these abstracts.
+
+    **CRITICAL INSTRUCTIONS:**
+    1.  You MUST create an entry for EACH of the {num_papers} papers in the 'key_hypotheses_and_findings' array.
+    2.  You MUST create an entry for EACH of the {num_papers} papers in the 'methodology_comparison' array.
+    3.  The 'executive_summary' should synthesize the findings from ALL papers.
+    4.  The 'contradictions_and_gaps' should identify points of conflict or missing information across the ENTIRE set of papers.
+
+    Abstracts to Analyze:
+    ---
+    {text}
+    ---
+    """
     response = await model.generate_content_async(prompt)
     try:
         if not response.parts: raise ValueError("Model returned empty response.")
@@ -143,15 +162,14 @@ async def generate_research_brief(text, query):
         raise
 
 # --- UI RENDERING ---
-# [display_research_brief function is unchanged and redacted]
 def display_research_brief(brief_data):
     if not brief_data or "brief_data" not in brief_data or not brief_data["brief_data"]: st.error("Brief data is missing."); return
     query = brief_data["query"]; st.header(f"Dynamic Research Brief: {query}")
     st.subheader("Executive Summary"); st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
     if data := brief_data["brief_data"].get("key_hypotheses_and_findings", []):
-        df = pd.DataFrame(data); df.columns = ["Paper Title", "Hypothesis", "Finding"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
+        st.subheader(f"Key Hypotheses & Findings ({len(data)} Papers)"); df = pd.DataFrame(data); df.columns = ["Paper Title", "Hypothesis", "Finding"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
     if data := brief_data["brief_data"].get("methodology_comparison", []):
-        st.subheader("Methodology Comparison"); df = pd.DataFrame(data); df.columns = ["Paper Title", "Methodology"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
+        st.subheader(f"Methodology Comparison ({len(data)} Papers)"); df = pd.DataFrame(data); df.columns = ["Paper Title", "Methodology"]; st.markdown(df.to_html(index=False), unsafe_allow_html=True)
     if data := brief_data["brief_data"].get("contradictions_and_gaps", []):
         st.subheader("Identified Contradictions & Research Gaps");
         for item in data: st.markdown(f"- {item}")
@@ -182,8 +200,8 @@ with st.sidebar:
                 try:
                     topic_query = st.session_state.get("search_query", "Selected Papers")
                     papers_to_analyze = st.session_state.paper_cart
-                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p.get('summary', 'No summary available.')}" for p in papers_to_analyze])
-                    brief_data = asyncio.run(generate_research_brief(combined_abstracts, topic_query))
+                    # Call the updated AI function
+                    brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
                     st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
                     st.session_state.paper_cart = []; st.session_state.search_results = []
                     st.rerun()
@@ -222,7 +240,10 @@ elif st.session_state.search_results:
     st.markdown(f"Found **{len(st.session_state.search_results)}** relevant papers from arXiv and PubMed.")
     for i, paper in enumerate(st.session_state.search_results):
         st.subheader(paper['title'])
-        st.markdown(f"_{paper.get('summary', 'No summary available.')}_ [Link]({paper.get('url', '#')})")
+        st.markdown(f"[Link to Paper]({paper.get('url', '#')})")
+        # Use an expander for the full abstract
+        with st.expander("View Abstract"):
+            st.markdown(paper.get('summary', 'No summary available.'))
         if st.button("➕ Add to Brief", key=f"add_{i}"):
             st.session_state.paper_cart.append(paper)
             st.session_state.search_results.pop(i)
@@ -244,4 +265,4 @@ if prompt := st.chat_input("Search for papers across arXiv and PubMed..."):
                 st.rerun()
         except Exception as e:
             st.error(f"Failed to perform search: {e}")
-
+            
