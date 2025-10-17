@@ -1,7 +1,6 @@
 import streamlit as st
 import arxiv
 import google.generativeai as genai
-# NEW: Import the necessary type for structured output
 from google.generativeai.types import GenerationConfig
 from Bio import Entrez
 import json
@@ -100,7 +99,7 @@ def load_specific_brief(brief_id):
     return None
 
 # --- DATA FETCHING & AI FUNCTIONS ---
-# [fetch_data functions are unchanged and redacted for brevity]
+# [fetch_data and generate_research_brief functions are unchanged and redacted]
 async def fetch_data(source, query, max_results):
     if source == 'arXiv':
         return await fetch_arxiv_data(query, max_results)
@@ -132,91 +131,27 @@ async def fetch_pubmed_data(query, max_results):
             except (KeyError, IndexError): continue
         return papers_data
     return await loop.run_in_executor(None, search_and_fetch)
-
-
 async def generate_research_brief(text, query):
-    """
-    UPGRADED: Generates a structured JSON research brief using the SDK's native JSON mode.
-    This is the most reliable method.
-    """
-    
-    # 1. Define the JSON schema for the desired output
-    json_schema = {
-        "type": "object",
-        "properties": {
-            "executive_summary": {
-                "type": "string",
-                "description": "A detailed, high-level synthesis of the key findings. It should connect the papers and explain their collective importance. Minimum 3-4 sentences."
-            },
-            "key_hypotheses_and_findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "paper_title": {"type": "string", "description": "The full title of the paper."},
-                        "hypothesis": {"type": "string", "description": "The core hypothesis or research question of the paper, stated clearly."},
-                        "finding": {"type": "string", "description": "A detailed explanation of the primary finding or conclusion of the paper, including key supporting points from the abstract."}
-                    },
-                    "required": ["paper_title", "hypothesis", "finding"]
-                }
-            },
-            "methodology_comparison": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "paper_title": {"type": "string", "description": "The full title of the paper."},
-                        "methodology": {"type": "string", "description": "A clear description of the methodology used (e.g., 'Systematic Review of 50 papers', 'Randomized Control Trial with 250 participants')."}
-                    },
-                    "required": ["paper_title", "methodology"]
-                }
-            },
-            "contradictions_and_gaps": {
-                "type": "array",
-                "items": {"type": "string", "description": "A bullet point describing a specific contradiction or research gap."}
-            }
-        },
-        "required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]
-    }
-
-    # 2. Configure the model to use JSON mode with the defined schema
-    generation_config = GenerationConfig(
-        response_mime_type="application/json",
-        response_schema=json_schema
-    )
-    
-    model = genai.GenerativeModel(
-        'gemini-2.5-pro',
-        generation_config=generation_config
-    )
-    
-    # 3. The prompt can now be simpler, as it doesn't need to specify the JSON structure
-    prompt = f"""
-    Act as a world-class research analyst. Analyze the following research paper abstracts on the topic of '{query}'.
-    Your task is to populate the provided JSON schema with a detailed, substantial, and accurate intelligence brief based on the abstracts.
-
-    Abstracts:
-    ---
-    {text}
-    ---
-    """
-    
+    json_schema = {"type": "object", "properties": { "executive_summary": {"type": "string"}, "key_hypotheses_and_findings": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"hypothesis": {"type": "string"},"finding": {"type": "string"}}}},"methodology_comparison": {"type": "array", "items": {"type": "object", "properties": {"paper_title": {"type": "string"},"methodology": {"type": "string"}}}}, "contradictions_and_gaps": {"type": "array", "items": {"type": "string"}}},"required": ["executive_summary", "key_hypotheses_and_findings", "methodology_comparison", "contradictions_and_gaps"]}
+    generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
+    model = genai.GenerativeModel('gemini-2.5-pro', generation_config=generation_config)
+    prompt = f"Act as a world-class research analyst. Analyze the following abstracts on '{query}' and populate the provided JSON schema with a detailed intelligence brief.\n\nAbstracts:\n---\n{text}\n---"
     response = await model.generate_content_async(prompt)
-
-    # 4. Error handling is now much cleaner
     try:
-        # The SDK guarantees the output is parseable JSON, so we can access it directly
+        if not response.parts: raise ValueError("Model returned empty response.")
         return json.loads(response.text)
     except (ValueError, json.JSONDecodeError, AttributeError) as e:
-        st.error("Error: The AI model failed to generate a valid response, possibly due to safety filters or an internal error.")
-        st.code(f"Model Response Parts:\n{response.parts}", language="text")
+        st.error(f"Error: AI response was not valid JSON. {e}")
+        st.code(f"Raw Model Response:\n{response.text}", language="text")
         raise
 
+
 # --- UI RENDERING ---
-# [display_research_brief function is unchanged and redacted for brevity]
 def display_research_brief(brief_data):
+    """Renders the structured research brief."""
     query = brief_data["query"]
     st.header(f"Dynamic Research Brief: {query}")
+    # [Table rendering logic is unchanged and redacted]
     st.subheader("Executive Summary")
     st.markdown(brief_data["brief_data"].get("executive_summary", "Not available."))
     st.subheader("Key Hypotheses & Findings")
@@ -248,43 +183,21 @@ init_db()
 if 'current_brief' not in st.session_state:
     st.session_state.current_brief = None
 
-# Sidebar UI
+# --- REVISED SIDEBAR ---
+# The sidebar is now for configuration and the knowledge base only.
 with st.sidebar:
-    # [Sidebar code is unchanged and redacted for brevity]
     st.image("https://i.imgur.com/rLoaV0k.png", width=50)
     st.title("Research OS")
     st.markdown("The Insight Engine for Modern Research.")
     st.markdown("---")
     
-    st.header("Controls")
+    st.header("⚙️ Configuration")
     data_source = st.selectbox("Data Source", ["arXiv", "PubMed"])
-    search_query = st.text_input("Research Topic", placeholder="e.g., CRISPR-Cas9")
     num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3)
-    
-    if st.button("Generate Research Brief", type="primary", use_container_width=True):
-        if not search_query:
-            st.warning("Please enter a research topic.")
-        else:
-            with st.spinner(f"Building brief for '{search_query}'..."):
-                try:
-                    papers_data = asyncio.run(fetch_data(data_source, search_query, num_papers))
-                    
-                    if not papers_data:
-                        st.warning(f"No academic papers found for '{search_query}' on {data_source}. Please try a more specific research topic.")
-                        st.stop()
 
-                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
-                    brief_data = asyncio.run(generate_research_brief(combined_abstracts, search_query))
-                    st.session_state.current_brief = {
-                        "query": search_query, "brief_data": brief_data, "papers_data": papers_data
-                    }
-
-                except Exception:
-                    st.error("Failed to generate the research brief. The model may have refused to answer due to safety filters.")
-
-    # [Knowledge Base UI code is unchanged and redacted for brevity]
     st.markdown("---")
     st.header("🧠 Knowledge Base")
+    # [Knowledge Base UI is unchanged and redacted]
     new_project_name = st.text_input("New Project Name", placeholder="e.g., Cancer Research Grant")
     if st.button("Create New Project", use_container_width=True):
         if new_project_name:
@@ -311,28 +224,40 @@ with st.sidebar:
                 if st.button(brief_query, key=f"load_{brief_id}", use_container_width=True):
                     st.session_state.current_brief = load_specific_brief(brief_id)
 
-# Main Page Display
+# --- MAIN PAGE DISPLAY ---
 st.title("🔬 Research OS")
 
+# Display existing brief if one is in session state
 if st.session_state.current_brief:
     display_research_brief(st.session_state.current_brief)
-    
+    # [Save to Project UI is unchanged and redacted]
     projects_for_saving = get_projects()
     if projects_for_saving:
         project_names = {name: id for id, name in projects_for_saving}
         selected_project_name = st.selectbox("Select project to save brief:", options=project_names.keys())
-        
         if st.button("💾 Save to Project", key="save_to_project"):
             selected_project_id = project_names[selected_project_name]
-            save_brief(
-                selected_project_id,
-                st.session_state.current_brief['query'],
-                st.session_state.current_brief['brief_data'],
-                st.session_state.current_brief['papers_data']
-            )
+            save_brief(selected_project_id, st.session_state.current_brief['query'], st.session_state.current_brief['brief_data'], st.session_state.current_brief['papers_data'])
             st.toast(f"Saved brief to '{selected_project_name}'!")
             st.rerun()
     else:
         st.warning("Please create a project in the sidebar to save this brief.")
-else:
-    st.info("Enter a topic in the sidebar and click 'Generate Research Brief' to begin.")
+
+# --- NEW CHAT INPUT ---
+# This is the primary interaction point for the user now.
+if prompt := st.chat_input("Enter your research topic..."):
+    with st.spinner(f"Building brief for '{prompt}'..."):
+        try:
+            papers_data = asyncio.run(fetch_data(data_source, prompt, num_papers))
+            if not papers_data:
+                st.warning(f"No academic papers found for '{prompt}' on {data_source}.")
+            else:
+                combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
+                brief_data = asyncio.run(generate_research_brief(combined_abstracts, prompt))
+                st.session_state.current_brief = {
+                    "query": prompt, "brief_data": brief_data, "papers_data": papers_data
+                }
+                # Rerun the script to display the new brief and the save options
+                st.rerun()
+        except Exception:
+            st.error("Failed to generate the research brief. The model may have refused to answer.")
