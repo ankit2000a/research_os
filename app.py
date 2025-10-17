@@ -99,35 +99,39 @@ async def search_google_scholar(query):
         
     return await loop.run_in_executor(None, sync_search)
 
-async def get_paper_details_from_url(url):
-    """Uses AI to extract title and summary from a given URL."""
+async def get_full_abstract_from_url(url):
+    """Uses AI to extract a full, clean abstract from a given URL."""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-        page_text = ' '.join(p.get_text() for p in soup.find_all('p'))
+        
+        # A more robust way to find the abstract text
+        main_content = soup.find('main') or soup.find('article') or soup.find('body')
+        page_text = ' '.join(p.get_text() for p in main_content.find_all('p')) if main_content else ''
 
-        if not page_text:
-            return {"title": "Error", "summary": "Could not extract text from this URL."}
+        if not page_text or len(page_text) < 100:
+            return "Could not extract sufficient text from this URL."
 
         model = genai.GenerativeModel('gemini-2.5-pro')
-        prompt = f"""Analyze the text from {url} and extract the academic paper's title and summary. Return a JSON with "title" and "summary". If not a paper, return "title": "Error", "summary": "Not an academic paper." Text: --- {page_text[:4000]} ---"""
-        json_schema = {"type": "object", "properties": {"title": {"type": "string"}, "summary": {"type": "string"}}, "required": ["title", "summary"]}
-        generation_config = GenerationConfig(response_mime_type="application/json", response_schema=json_schema)
-        model.generation_config = generation_config
+        prompt = f"""Analyze the following text content from the URL: {url}
+        Your task is to identify and return ONLY the full, clean, and well-written abstract of the academic paper.
+        Do not include the title or any other text.
+        
+        Text content:
+        ---
+        {page_text[:8000]} 
+        ---
+        """
         
         ai_response = await model.generate_content_async(prompt)
-        details = json.loads(ai_response.text)
-        details['url'] = url
-        return details
+        return ai_response.text
         
     except requests.exceptions.HTTPError as e:
-        st.error(f"Could not access URL: {e}. Some sites (like JSTOR) block automated requests.")
-        return None
+        return f"Could not access URL: {e}. Some sites (like JSTOR) block automated requests."
     except Exception as e:
-        st.error(f"Could not process URL: {e}")
-        return None
+        return f"Could not process URL: {e}"
 
 async def generate_research_brief(papers, query):
     """Generates the structured research brief, forcing comprehensiveness."""
@@ -151,24 +155,24 @@ def display_research_brief(brief_data):
 init_db()
 if 'current_brief' not in st.session_state: st.session_state.current_brief = None
 if 'search_results' not in st.session_state: st.session_state.search_results = []
-if 'paper_cart' not in st.session_state: st.session_state.paper_cart = []
+if 'selected_papers' not in st.session_state: st.session_state.selected_papers = {}
 
 with st.sidebar:
     st.image("https://i.imgur.com/rLoaV0k.png", width=50); st.title("Research OS"); st.markdown("---")
     
-    # REVISED BRIEFING CART UI
-    num_selected = len(st.session_state.paper_cart)
+    num_selected = len(st.session_state.selected_papers)
     if num_selected > 0:
         if st.button(f"Generate Brief from {num_selected} Papers", type="primary", use_container_width=True):
             with st.spinner("Synthesizing your curated brief..."):
                 try:
                     topic_query = st.session_state.get("search_query", "Selected Papers")
-                    papers_to_analyze = st.session_state.paper_cart
+                    papers_to_analyze = list(st.session_state.selected_papers.values())
                     brief_data = asyncio.run(generate_research_brief(papers_to_analyze, topic_query))
                     st.session_state.current_brief = {"query": topic_query, "brief_data": brief_data, "papers_data": papers_to_analyze}
-                    st.session_state.paper_cart = []; st.session_state.search_results = []
+                    st.session_state.selected_papers = {}; st.session_state.search_results = []
                     st.rerun()
-                except Exception: st.error("Failed to generate brief.")
+                except Exception as e:
+                    st.error(f"Failed to generate brief: {e}")
     else:
         st.info("Select papers from the search results to generate a brief.")
 
@@ -180,43 +184,43 @@ if st.session_state.current_brief:
     # ... save to project UI
 elif st.session_state.search_results:
     st.header(f"Search Results for '{st.session_state.search_query}'")
-    st.markdown(f"Found **{len(st.session_state.search_results)}** papers. Add the most relevant to your brief.")
+    st.markdown(f"Found **{len(st.session_state.search_results)}** papers. Select the most relevant to generate your brief.")
     
-    # Get a set of titles for quick checking
-    cart_titles = {p['title'] for p in st.session_state.paper_cart}
-
     for i, paper in enumerate(st.session_state.search_results):
-        col1, col2 = st.columns([10, 2])
-        with col1:
-            st.subheader(paper['title'])
-        with col2:
-            # Show "Added" if paper is in cart, otherwise show the button
-            if paper['title'] in cart_titles:
-                st.success("✅ Added")
-            else:
-                if st.button("➕ Add to Brief", key=f"add_{i}"):
-                    st.session_state.paper_cart.append(paper)
+        with st.container():
+            col1, col2 = st.columns([10, 2])
+            with col1:
+                st.subheader(paper['title'])
+            with col2:
+                # Toggle button logic
+                is_selected = paper['title'] in st.session_state.selected_papers
+                button_text = "➖ Remove" if is_selected else "➕ Add to Brief"
+                if st.button(button_text, key=f"toggle_{i}"):
+                    if is_selected:
+                        del st.session_state.selected_papers[paper['title']]
+                    else:
+                        st.session_state.selected_papers[paper['title']] = paper
                     st.rerun()
 
-        with st.expander("View Abstract"):
-            st.markdown(f"**[Link to Paper]({paper.get('url', '#')})**")
-            st.markdown(paper.get('summary', 'No summary available.'))
+            with st.expander("View Abstract"):
+                st.markdown(f"**[Link to Paper]({paper.get('url', '#')})**")
+                
+                # Abstract display with "Fetch Full Abstract" button
+                abstract_placeholder = st.empty()
+                abstract_placeholder.markdown(paper.get('summary', 'No summary available.'))
+                
+                if st.button("⬇️ Fetch Full Abstract", key=f"fetch_{i}"):
+                    with st.spinner("Fetching full abstract with AI..."):
+                        full_summary = asyncio.run(get_full_abstract_from_url(paper.get('url')))
+                        st.session_state.search_results[i]['summary'] = full_summary
+                        abstract_placeholder.markdown(full_summary) # Update display immediately
+            
+            st.markdown("---")
+
 else:
-    st.info("Enter a topic to search Google Scholar, or add a paper by URL below.")
+    st.info("Enter a topic in the chat bar below to search Google Scholar.")
 
-# --- BOTTOM CONTROLS & CHAT INPUT ---
-st.container()
-url_to_add = st.text_input("🔗 Add a specific paper by URL", help="Paste a link from Google Scholar, arXiv, etc. Note: some sites like JSTOR may block access.")
-if st.button("Add Paper from URL"):
-    if url_to_add:
-        with st.spinner("Analyzing URL..."):
-            paper_details = asyncio.run(get_paper_details_from_url(url_to_add))
-            if paper_details and paper_details['title'] != "Error":
-                st.session_state.paper_cart.append(paper_details)
-                st.rerun()
-    else:
-        st.warning("Please enter a URL.")
-
+# --- BOTTOM CHAT INPUT (URL input removed) ---
 if prompt := st.chat_input("Search Google Scholar for papers..."):
     st.session_state.search_query = prompt
     with st.spinner(f"Searching Google Scholar for '{prompt}'..."):
@@ -227,6 +231,7 @@ if prompt := st.chat_input("Search Google Scholar for papers..."):
             else:
                 st.session_state.search_results = results
                 st.session_state.current_brief = None
+                st.session_state.selected_papers = {} # Clear selection on new search
                 st.rerun()
         except Exception as e:
             st.error(f"Failed to perform search: {e}")
