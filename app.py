@@ -74,13 +74,13 @@ async def search_and_find_papers(query):
     """
     Uses Gemini with Google Search grounding to find relevant papers from the entire web.
     """
+    # --- THIS IS THE FIX ---
+    # The 'tools' parameter now uses the correct dictionary format to enable Google Search.
     model = genai.GenerativeModel(
         'gemini-2.5-pro',
-        tools=['google_search']
+        tools=[{"google_search": {}}]
     )
     
-    # --- THIS IS THE FIX ---
-    # The prompt is now much stricter to ensure academic quality.
     prompt = f"""
     You are an expert academic research librarian. Your task is to use Google Search to find the top 7 most relevant and recent **academic papers, preprints, and scholarly articles** from across the entire web for the topic: "{query}".
 
@@ -231,4 +231,3 @@ if prompt := st.chat_input("Search the web for academic papers..."):
                 st.rerun()
         except Exception as e:
             st.error(f"Failed to perform AI search: {e}")
-            
