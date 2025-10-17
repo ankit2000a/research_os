@@ -20,7 +20,7 @@ st.set_page_config(
 st.markdown("""
 <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-    .main .block-container { padding: 2rem; }
+    .main .block-container { padding: 2rem; padding-bottom: 5rem; } /* Add padding to bottom */
     table { border: none; width: 100%; }
     table thead th { border-bottom: 2px solid #303640; font-size: 1rem; font-weight: 600; color: #CED4DA; text-align: left !important; }
     table tbody tr { border-bottom: 1px solid #303640; }
@@ -145,7 +145,6 @@ async def generate_research_brief(text, query):
         st.code(f"Raw Model Response:\n{response.text}", language="text")
         raise
 
-
 # --- UI RENDERING ---
 def display_research_brief(brief_data):
     """Renders the structured research brief."""
@@ -183,18 +182,10 @@ init_db()
 if 'current_brief' not in st.session_state:
     st.session_state.current_brief = None
 
-# --- REVISED SIDEBAR ---
-# The sidebar is now for configuration and the knowledge base only.
+# --- CLEANED SIDEBAR (KNOWLEDGE BASE ONLY) ---
 with st.sidebar:
     st.image("https://i.imgur.com/rLoaV0k.png", width=50)
     st.title("Research OS")
-    st.markdown("The Insight Engine for Modern Research.")
-    st.markdown("---")
-    
-    st.header("⚙️ Configuration")
-    data_source = st.selectbox("Data Source", ["arXiv", "PubMed"])
-    num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3)
-
     st.markdown("---")
     st.header("🧠 Knowledge Base")
     # [Knowledge Base UI is unchanged and redacted]
@@ -224,10 +215,11 @@ with st.sidebar:
                 if st.button(brief_query, key=f"load_{brief_id}", use_container_width=True):
                     st.session_state.current_brief = load_specific_brief(brief_id)
 
+
 # --- MAIN PAGE DISPLAY ---
 st.title("🔬 Research OS")
 
-# Display existing brief if one is in session state
+# Display existing brief or welcome message
 if st.session_state.current_brief:
     display_research_brief(st.session_state.current_brief)
     # [Save to Project UI is unchanged and redacted]
@@ -242,22 +234,39 @@ if st.session_state.current_brief:
             st.rerun()
     else:
         st.warning("Please create a project in the sidebar to save this brief.")
+else:
+     st.info("Enter a topic in the chat bar below to generate your first research brief.")
 
-# --- NEW CHAT INPUT ---
-# This is the primary interaction point for the user now.
-if prompt := st.chat_input("Enter your research topic..."):
-    with st.spinner(f"Building brief for '{prompt}'..."):
-        try:
-            papers_data = asyncio.run(fetch_data(data_source, prompt, num_papers))
-            if not papers_data:
-                st.warning(f"No academic papers found for '{prompt}' on {data_source}.")
-            else:
-                combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
-                brief_data = asyncio.run(generate_research_brief(combined_abstracts, prompt))
-                st.session_state.current_brief = {
-                    "query": prompt, "brief_data": brief_data, "papers_data": papers_data
-                }
-                # Rerun the script to display the new brief and the save options
-                st.rerun()
-        except Exception:
-            st.error("Failed to generate the research brief. The model may have refused to answer.")
+# --- NEW POPOVER CONTROLS & CHAT INPUT ---
+# This entire section is now at the bottom of the main page flow
+
+# Use columns to place the popover button to the left
+col1, col2 = st.columns([1, 15]) 
+with col1:
+    # This popover holds the configuration options
+    with st.popover("⚙️"):
+        st.markdown("### Configuration")
+        data_source = st.selectbox("Data Source", ["arXiv", "PubMed"], key="data_source_popover")
+        num_papers = st.slider("Number of Papers", min_value=2, max_value=5, value=3, key="num_papers_popover")
+with col2:
+    # The main chat input
+    if prompt := st.chat_input("Enter your research topic..."):
+        # Retrieve settings from the popover's widgets
+        ds = st.session_state.data_source_popover
+        np = st.session_state.num_papers_popover
+
+        with st.spinner(f"Building brief for '{prompt}'..."):
+            try:
+                papers_data = asyncio.run(fetch_data(ds, prompt, np))
+                if not papers_data:
+                    st.warning(f"No academic papers found for '{prompt}' on {ds}.")
+                else:
+                    combined_abstracts = "\n\n".join([f"**Paper:** {p['title']}\n{p['summary']}" for p in papers_data])
+                    brief_data = asyncio.run(generate_research_brief(combined_abstracts, prompt))
+                    st.session_state.current_brief = {
+                        "query": prompt, "brief_data": brief_data, "papers_data": papers_data
+                    }
+                    st.rerun()
+            except Exception:
+                st.error("Failed to generate the research brief.")
+                
